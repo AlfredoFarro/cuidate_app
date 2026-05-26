@@ -20,23 +20,26 @@ type PreMainNav = StackNavigationProp<RootStackParamList, "PreMain">;
 
 type PreMainRouteName = Extract<
     keyof RootStackParamList,
-    "FormMenu" | "MedicalMenu" | "LearningMenu"
+    "FormMenu" | "MedicalMenu" | "LearningMenu" | "TrainingMenu"
 >;
 
 const DEFAULT_MODULES: PreMainRouteName[] = [
     "FormMenu",
     "MedicalMenu",
     "LearningMenu",
+    "TrainingMenu",
 ];
 
 /**
- * `id` del proyecto → pantalla del stack.
- * 1 Inspecciones → FormMenu, 2 Capacitaciones → LearningMenu, 3 Salud ocupacional → MedicalMenu
+ * `id` del proyecto -> pantalla del stack.
+ * 1 Inspecciones -> FormMenu, 2 Capacitaciones -> LearningMenu,
+ * 3 Salud ocupacional -> MedicalMenu, 4 Training -> TrainingMenu
  */
 const PROJECT_ID_TO_ROUTE: Record<number, PreMainRouteName> = {
     1: "FormMenu",
     2: "LearningMenu",
     3: "MedicalMenu",
+    4: "TrainingMenu",
 };
 
 function projectIdFromItem(o: Record<string, unknown>): number | null {
@@ -75,6 +78,12 @@ const MODULE_UI: Record<
     LearningMenu: {
         title: "Learning",
         hint: "Módulo para realizar capacitaiones virtuales",
+        icon: "school-outline",
+        btnStyle: "btnLearning",
+    },
+    TrainingMenu: {
+        title: "Training",
+        hint: "Módulo para realizar entrenamientos virtuales",
         icon: "school-outline",
         btnStyle: "btnLearning",
     },
