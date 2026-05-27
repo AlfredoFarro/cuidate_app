@@ -1,11 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { RouteProp, useRoute } from "@react-navigation/native";
 import { COLORS } from "@/theme/colors";
 import { trainingClient } from "@/api/apiClient";
 import { userService } from "@/services/UserService";
 import type { RootStackParamList } from "@/navigation/AppNavigator";
+import { loadingService } from "@/services/LoadingService";
 
 type TrainingMatrixRoute = RouteProp<RootStackParamList, "TrainingMatrix">;
 
@@ -32,8 +41,11 @@ type MatrixPeriod = {
     title: string;
     startDate: string;
     endDate: string;
+    evaluationDate: string | null;
     status: string;
     canEdit: boolean;
+    validationNotes: string | null;
+    reinforcementNotes: string | null;
     qtyOperationTotal: number;
     qtyOperationStarted: number;
     scores: MatrixPeriodScore[];
@@ -77,6 +89,27 @@ type MatrixData = {
 
 type MatrixResponse = {
     data?: MatrixData;
+};
+
+type PeriodDraft = {
+    evaluationDate: string;
+    validationNotes: string;
+    reinforcementNotes: string;
+    scores: Record<string, string>;
+};
+
+type SavePeriodProgressPayload = {
+    document: string;
+    email: string;
+    evaluationDate: string;
+    validationNotes: string;
+    reinforcementNotes: string;
+    scores: {
+        templateOperationId: string;
+        score: number;
+        checklist: string;
+        notes: string;
+    }[];
 };
 
 function formatDate(value?: string) {
@@ -138,40 +171,65 @@ function periodBadgeStyle(canEdit: boolean) {
 export function TrainingMatrix() {
     const route = useRoute<TrainingMatrixRoute>();
     const [matrix, setMatrix] = useState<MatrixData | null>(null);
+    const [periodDrafts, setPeriodDrafts] = useState<Record<string, PeriodDraft>>(
+        {},
+    );
+
+    const loadMatrix = async () => {
+        try {
+            await userService.loadStorage();
+
+            const payload = {
+                document: userService.user.dni ?? "",
+                email: userService.user.email ?? "",
+            };
+
+            const res = await trainingClient.post<MatrixResponse>(
+                `/training/app/${route.params.trainingId}/matrix`,
+                payload,
+            );
+
+            setMatrix(res.data?.data ?? null);
+            setPeriodDrafts(
+                Object.fromEntries(
+                    (res.data?.data?.periods ?? []).map((period) => [
+                        period.id,
+                        {
+                            evaluationDate:
+                                period.evaluationDate ?? period.startDate,
+                            validationNotes: period.validationNotes ?? "",
+                            reinforcementNotes:
+                                period.reinforcementNotes ?? "",
+                            scores: Object.fromEntries(
+                                (period.scores ?? []).map((score) => [
+                                    score.operationId,
+                                    score.score == null
+                                        ? ""
+                                        : String(score.score),
+                                ]),
+                            ),
+                        } satisfies PeriodDraft,
+                    ]),
+                ),
+            );
+
+            console.log(
+                "[TrainingMatrix] /training/app/:id/matrix payload:",
+                payload,
+            );
+            console.log(
+                "[TrainingMatrix] /training/app/:id/matrix OK:",
+                res.data,
+            );
+        } catch (error) {
+            console.log(
+                "[TrainingMatrix] /training/app/:id/matrix ERROR:",
+                error,
+            );
+        }
+    };
 
     useEffect(() => {
-        const loadMatrix = async () => {
-            try {
-                await userService.loadStorage();
-
-                const payload = {
-                    document: userService.user.dni ?? "",
-                    email: userService.user.email ?? "",
-                };
-
-                const res = await trainingClient.post<MatrixResponse>(
-                    `/training/app/${route.params.trainingId}/matrix`,
-                    payload,
-                );
-
-                setMatrix(res.data?.data ?? null);
-
-                console.log(
-                    "[TrainingMatrix] /training/app/:id/matrix payload:",
-                    payload,
-                );
-                console.log(
-                    "[TrainingMatrix] /training/app/:id/matrix OK:",
-                    res.data,
-                );
-            } catch (error) {
-                console.log(
-                    "[TrainingMatrix] /training/app/:id/matrix ERROR:",
-                    error,
-                );
-            }
-        };
-
         void loadMatrix();
     }, [route.params.trainingId]);
 
@@ -182,6 +240,83 @@ export function TrainingMatrix() {
         }
         return map;
     }, [matrix?.operations]);
+
+    const updatePeriodDraft = (
+        periodId: string,
+        updater: (draft: PeriodDraft) => PeriodDraft,
+    ) => {
+        setPeriodDrafts((prev) => {
+            const current =
+                prev[periodId] ??
+                ({
+                    evaluationDate: "",
+                    validationNotes: "",
+                    reinforcementNotes: "",
+                    scores: {},
+                } satisfies PeriodDraft);
+
+            return {
+                ...prev,
+                [periodId]: updater(current),
+            };
+        });
+    };
+
+    const onRegisterPeriod = async (period: MatrixPeriod) => {
+        try {
+            await userService.loadStorage();
+            await loadingService.present();
+
+            const draft = periodDrafts[period.id];
+            const minScore =
+                matrix?.summary?.minimumPassingScore ??
+                matrix?.template?.minimumPassingScore ??
+                5;
+
+            const payload: SavePeriodProgressPayload = {
+                document: userService.user.dni ?? "",
+                email: userService.user.email ?? "",
+                evaluationDate: new Date().toISOString(),
+                validationNotes:
+                    draft?.validationNotes?.trim() ||
+                    "Validación registrada desde app",
+                reinforcementNotes:
+                    draft?.reinforcementNotes?.trim() ||
+                    "Reforzar operaciones observadas",
+                scores: (period.scores ?? []).map((score) => ({
+                    templateOperationId: score.operationId,
+                    score: Number(draft?.scores?.[score.operationId] || score.score || minScore),
+                    checklist: "",
+                    notes: score.notes ?? "Registro enviado desde app",
+                })),
+            };
+
+            const res = await trainingClient.post(
+                `/training/app/periods/${period.id}/progress`,
+                payload,
+            );
+
+            console.log(
+                "[TrainingMatrix] /training/app/periods/:id/progress payload:",
+                payload,
+            );
+            console.log(
+                "[TrainingMatrix] /training/app/periods/:id/progress OK:",
+                res.data,
+            );
+
+            await loadMatrix();
+            Alert.alert("Training", "Registro del periodo enviado.");
+        } catch (error) {
+            console.log(
+                "[TrainingMatrix] /training/app/periods/:id/progress ERROR:",
+                error,
+            );
+            Alert.alert("Training", "No se pudo registrar el periodo.");
+        } finally {
+            await loadingService.dismiss();
+        }
+    };
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -356,29 +491,172 @@ export function TrainingMatrix() {
                                         const operation = operationsById.get(
                                             score.operationId,
                                         );
+                                        const draft = periodDrafts[period.id];
 
                                         return (
                                             <View
                                                 key={`${period.id}-${score.operationId}`}
-                                                style={styles.scoreRow}
+                                                style={styles.scoreEditorCard}
                                             >
-                                                <View style={styles.scoreMain}>
-                                                    <Text style={styles.scoreTitle}>
-                                                        {operation?.title ??
-                                                            "Operación"}
-                                                    </Text>
-                                                    <Text style={styles.scoreSubtitle}>
-                                                        {operation?.code ?? "-"}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.scoreSide}>
-                                                    <Text style={styles.scoreValue}>
-                                                        {score.score ?? "-"}
-                                                    </Text>
-                                                </View>
+                                                <Text style={styles.scoreTitle}>
+                                                    {operation?.title ?? "Operación"}
+                                                </Text>
+                                                <Text style={styles.scoreSubtitle}>
+                                                    {operation?.code ?? "-"}
+                                                </Text>
+                                                <TextInput
+                                                    style={[
+                                                        styles.scoreInput,
+                                                        !period.canEdit &&
+                                                            styles.inputLocked,
+                                                    ]}
+                                                    value={
+                                                        draft?.scores?.[
+                                                            score.operationId
+                                                        ] ?? ""
+                                                    }
+                                                    onChangeText={(value) =>
+                                                        updatePeriodDraft(
+                                                            period.id,
+                                                            (current) => ({
+                                                                ...current,
+                                                                scores: {
+                                                                    ...current.scores,
+                                                                    [score.operationId]:
+                                                                        value.replace(
+                                                                            /[^0-9.]/g,
+                                                                            "",
+                                                                        ),
+                                                                },
+                                                            }),
+                                                        )
+                                                    }
+                                                    placeholder="Puntaje"
+                                                    placeholderTextColor={
+                                                        COLORS.textMuted
+                                                    }
+                                                    keyboardType="numeric"
+                                                    editable={period.canEdit}
+                                                />
                                             </View>
                                         );
                                     })}
+
+                                    {!period.canEdit ? (
+                                        <>
+                                            <Text style={styles.fieldLabel}>
+                                                Validacion
+                                            </Text>
+                                            <TextInput
+                                                style={[
+                                                    styles.notesInput,
+                                                    styles.inputLocked,
+                                                ]}
+                                                value={
+                                                    periodDrafts[period.id]
+                                                        ?.validationNotes ?? ""
+                                                }
+                                                placeholder="Escribe la validacion"
+                                                placeholderTextColor={
+                                                    COLORS.textMuted
+                                                }
+                                                multiline
+                                                editable={false}
+                                            />
+
+                                            <Text style={styles.fieldLabel}>
+                                                Que le falta reforzar
+                                            </Text>
+                                            <TextInput
+                                                style={[
+                                                    styles.notesInput,
+                                                    styles.inputLocked,
+                                                ]}
+                                                value={
+                                                    periodDrafts[period.id]
+                                                        ?.reinforcementNotes ?? ""
+                                                }
+                                                placeholder="Escribe el refuerzo"
+                                                placeholderTextColor={
+                                                    COLORS.textMuted
+                                                }
+                                                multiline
+                                                editable={false}
+                                            />
+                                        </>
+                                    ) : null}
+
+                                    {period.canEdit ? (
+                                        <>
+                                            <Text style={styles.fieldLabel}>
+                                                Validación
+                                            </Text>
+                                            <TextInput
+                                                style={styles.notesInput}
+                                                value={
+                                                    periodDrafts[period.id]
+                                                        ?.validationNotes ?? ""
+                                                }
+                                                onChangeText={(value) =>
+                                                    updatePeriodDraft(
+                                                        period.id,
+                                                        (current) => ({
+                                                            ...current,
+                                                            validationNotes:
+                                                                value,
+                                                        }),
+                                                    )
+                                                }
+                                                placeholder="Escribe la validación"
+                                                placeholderTextColor={
+                                                    COLORS.textMuted
+                                                }
+                                                multiline
+                                            />
+
+                                            <Text style={styles.fieldLabel}>
+                                                Qué le falta reforzar
+                                            </Text>
+                                            <TextInput
+                                                style={styles.notesInput}
+                                                value={
+                                                    periodDrafts[period.id]
+                                                        ?.reinforcementNotes ?? ""
+                                                }
+                                                onChangeText={(value) =>
+                                                    updatePeriodDraft(
+                                                        period.id,
+                                                        (current) => ({
+                                                            ...current,
+                                                            reinforcementNotes:
+                                                                value,
+                                                        }),
+                                                    )
+                                                }
+                                                placeholder="Escribe el refuerzo"
+                                                placeholderTextColor={
+                                                    COLORS.textMuted
+                                                }
+                                                multiline
+                                            />
+
+                                            <TouchableOpacity
+                                                style={styles.registerButton}
+                                                activeOpacity={0.85}
+                                                onPress={() =>
+                                                    void onRegisterPeriod(period)
+                                                }
+                                            >
+                                                <Text
+                                                    style={
+                                                        styles.registerButtonText
+                                                    }
+                                                >
+                                                    Subir puntaje
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </>
+                                    ) : null}
                                 </View>
                             ))}
                         </View>
@@ -605,19 +883,11 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         marginBottom: 12,
     },
-    scoreRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
+    scoreEditorCard: {
         backgroundColor: COLORS.changePasswordBg,
         borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        padding: 12,
         marginBottom: 8,
-    },
-    scoreMain: {
-        flex: 1,
-        paddingRight: 12,
     },
     scoreTitle: {
         color: COLORS.text,
@@ -628,14 +898,51 @@ const styles = StyleSheet.create({
     scoreSubtitle: {
         color: COLORS.textMuted,
         fontSize: 12,
+        marginBottom: 10,
     },
-    scoreSide: {
-        minWidth: 42,
-        alignItems: "flex-end",
+    scoreInput: {
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        borderRadius: 10,
+        backgroundColor: COLORS.white,
+        color: COLORS.text,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 14,
     },
-    scoreValue: {
-        color: COLORS.primary,
-        fontSize: 18,
+    inputLocked: {
+        backgroundColor: COLORS.lightGray,
+        color: COLORS.textMuted,
+    },
+    fieldLabel: {
+        color: COLORS.changePasswordTitle,
+        fontSize: 13,
+        fontWeight: "700",
+        marginTop: 6,
+        marginBottom: 6,
+    },
+    notesInput: {
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        borderRadius: 10,
+        backgroundColor: COLORS.white,
+        color: COLORS.text,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 14,
+        minHeight: 92,
+        textAlignVertical: "top",
+    },
+    registerButton: {
+        marginTop: 8,
+        backgroundColor: COLORS.primary,
+        borderRadius: 10,
+        paddingVertical: 12,
+        alignItems: "center",
+    },
+    registerButtonText: {
+        color: COLORS.white,
+        fontSize: 14,
         fontWeight: "700",
     },
 });
