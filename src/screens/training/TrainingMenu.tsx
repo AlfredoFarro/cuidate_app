@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
-    Platform,
+    Alert,
     ScrollView,
     StyleSheet,
     Text,
@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { StackNavigationProp } from "@react-navigation/stack";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { AxiosError } from "axios";
 import { COLORS } from "@/theme/colors";
 import { trainingClient } from "@/api/apiClient";
 import { userService } from "@/services/UserService";
@@ -56,6 +56,19 @@ type OptionResponse = {
     data?: OptionItem[];
 };
 
+type ApiErrorResponse = {
+    message?: string;
+};
+
+type TrainingStatusFilter = "" | "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+
+const STATUS_OPTIONS: IonSelectOption<TrainingStatusFilter>[] = [
+    { value: "", label: "Todos" },
+    { value: "NOT_STARTED", label: "No iniciado" },
+    { value: "IN_PROGRESS", label: "En progreso" },
+    { value: "COMPLETED", label: "Completado" },
+];
+
 function formatDate(value?: string) {
     if (!value) return "-";
     const date = new Date(value);
@@ -86,12 +99,13 @@ export function TrainingMenu() {
     const [areaOptions, setAreaOptions] = useState<IonSelectOption<string>[]>([]);
     const [selectedProjectId, setSelectedProjectId] = useState<string>("");
     const [selectedAreaId, setSelectedAreaId] = useState<string>("");
-    const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [selectedStatus, setSelectedStatus] =
+        useState<TrainingStatusFilter>("");
 
     const loadEvaluable = async (filters?: {
         projectId?: string;
         areaId?: string;
+        status?: TrainingStatusFilter;
     }) => {
         try {
             await userService.loadStorage();
@@ -108,6 +122,7 @@ export function TrainingMenu() {
                             ? { projectId: filters.projectId }
                             : {}),
                         ...(filters?.areaId ? { areaId: filters.areaId } : {}),
+                        ...(filters?.status ? { status: filters.status } : {}),
                     },
                 },
             );
@@ -117,6 +132,11 @@ export function TrainingMenu() {
             console.log("[TrainingMenu] /training/app/evaluable OK:", res.data);
         } catch (error) {
             console.log("[TrainingMenu] /training/app/evaluable ERROR:", error);
+            const err = error as AxiosError<ApiErrorResponse>;
+            const msg =
+                err.response?.data?.message ??
+                "No se pudo consultar los trainings.";
+            Alert.alert("Training", msg);
         }
     };
 
@@ -141,13 +161,8 @@ export function TrainingMenu() {
 
         const loadProjectOptions = async () => {
             try {
-                const payload = {
-                    document: userService.user.dni ?? "",
-                    email: userService.user.email ?? "",
-                };
-                const res = await trainingClient.post<OptionResponse>(
+                const res = await trainingClient.get<OptionResponse>(
                     "/project/app/options",
-                    payload,
                 );
                 setProjectOptions(mapOptions(res.data?.data));
                 console.log("[TrainingMenu] /project/app/options OK:", res.data);
@@ -158,13 +173,8 @@ export function TrainingMenu() {
 
         const loadAreaOptions = async (projectId?: string) => {
             try {
-                const payload = {
-                    document: userService.user.dni ?? "",
-                    email: userService.user.email ?? "",
-                };
-                const res = await trainingClient.post<OptionResponse>(
+                const res = await trainingClient.get<OptionResponse>(
                     "/area/app/options",
-                    payload,
                     {
                         params: projectId ? { projectId } : undefined,
                     },
@@ -189,13 +199,8 @@ export function TrainingMenu() {
         const loadAreaOptions = async () => {
             try {
                 await userService.loadStorage();
-                const payload = {
-                    document: userService.user.dni ?? "",
-                    email: userService.user.email ?? "",
-                };
-                const res = await trainingClient.post<OptionResponse>(
+                const res = await trainingClient.get<OptionResponse>(
                     "/area/app/options",
-                    payload,
                     {
                         params: selectedProjectId
                             ? { projectId: selectedProjectId }
@@ -225,19 +230,11 @@ export function TrainingMenu() {
         void loadAreaOptions();
     }, [selectedProjectId]);
 
-    const onChangeDate = (_event: unknown, value?: Date) => {
-        if (Platform.OS === "android") {
-            setShowDatePicker(false);
-        }
-        if (value) {
-            setSelectedDate(value);
-        }
-    };
-
     const onFilter = () => {
         void loadEvaluable({
             projectId: selectedProjectId || undefined,
             areaId: selectedAreaId || undefined,
+            status: selectedStatus || undefined,
         });
     };
 
@@ -269,18 +266,13 @@ export function TrainingMenu() {
                         searchPlaceholder="Buscar área"
                     />
 
-                    <Text style={styles.dateLabel}>Fecha</Text>
-                    <TouchableOpacity
-                        style={styles.dateButton}
-                        activeOpacity={0.85}
-                        onPress={() => setShowDatePicker(true)}
-                    >
-                        <Text style={styles.dateButtonText}>
-                            {selectedDate
-                                ? selectedDate.toLocaleDateString("es-PE")
-                                : "Seleccionar fecha"}
-                        </Text>
-                    </TouchableOpacity>
+                    <FormIonSelect<TrainingStatusFilter>
+                        label="Estado"
+                        value={selectedStatus}
+                        options={STATUS_OPTIONS}
+                        onChange={setSelectedStatus}
+                        placeholder="Todos"
+                    />
 
                     <TouchableOpacity
                         style={styles.filterButton}
@@ -361,15 +353,6 @@ export function TrainingMenu() {
                     })
                 )}
             </ScrollView>
-
-            {showDatePicker ? (
-                <DateTimePicker
-                    value={selectedDate ?? new Date()}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onChange={onChangeDate}
-                />
-            ) : null}
         </SafeAreaView>
     );
 }
@@ -400,27 +383,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: "700",
         marginBottom: 4,
-    },
-    dateLabel: {
-        marginTop: 12,
-        marginBottom: 6,
-        fontWeight: "700",
-        color: COLORS.textLabel,
-        fontSize: 13,
-    },
-    dateButton: {
-        borderWidth: 1,
-        borderColor: COLORS.lightGray,
-        borderRadius: 8,
-        paddingHorizontal: 14,
-        paddingVertical: 14,
-        backgroundColor: COLORS.white,
-        minHeight: 48,
-        justifyContent: "center",
-    },
-    dateButtonText: {
-        fontSize: 15,
-        color: COLORS.text,
     },
     filterButton: {
         marginTop: 16,
