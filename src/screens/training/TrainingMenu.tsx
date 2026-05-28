@@ -79,6 +79,8 @@ function formatDate(value?: string) {
 function formatStatus(status?: string) {
     if (!status) return "-";
     switch (status) {
+        case "NOT_STARTED":
+            return "No iniciado";
         case "IN_PROGRESS":
             return "En progreso";
         case "COMPLETED":
@@ -88,6 +90,11 @@ function formatStatus(status?: string) {
         default:
             return status;
     }
+}
+
+function clampPercent(value?: number) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+    return Math.min(100, Math.max(0, Math.round(value)));
 }
 
 export function TrainingMenu() {
@@ -257,13 +264,13 @@ export function TrainingMenu() {
                     />
 
                     <FormIonSelect<string>
-                        label="Área"
+                        label="Area"
                         value={selectedAreaId}
                         options={areaOptions}
                         onChange={setSelectedAreaId}
                         placeholder="Todos"
                         searchable
-                        searchPlaceholder="Buscar área"
+                        searchPlaceholder="Buscar area"
                     />
 
                     <FormIonSelect<TrainingStatusFilter>
@@ -295,6 +302,12 @@ export function TrainingMenu() {
                             training.progress?.totalPeriods ??
                             training.template?.totalPeriods ??
                             0;
+                        const progressPercent = clampPercent(
+                            training.progress?.percentage,
+                        );
+                        const periodPercent = clampPercent(
+                            total > 0 ? (completed / total) * 100 : 0,
+                        );
 
                         return (
                             <TouchableOpacity
@@ -320,7 +333,7 @@ export function TrainingMenu() {
                                     {training.template?.name ?? "-"}
                                 </Text>
                                 <Text style={styles.item}>
-                                    <Text style={styles.label}>Área: </Text>
+                                    <Text style={styles.label}>Area: </Text>
                                     {training.area?.name ?? "-"}
                                 </Text>
                                 <Text style={styles.item}>
@@ -329,25 +342,61 @@ export function TrainingMenu() {
                                     </Text>
                                     {formatDate(training.startDate)}
                                 </Text>
-                                <Text style={styles.item}>
-                                    <Text style={styles.label}>
-                                        Estado del training:{" "}
-                                    </Text>
-                                    {formatStatus(training.status)}
-                                </Text>
-                                <Text style={styles.item}>
-                                    <Text style={styles.label}>
-                                        Porcentaje de avance:{" "}
-                                    </Text>
-                                    {training.progress?.percentage ?? 0}%
-                                </Text>
-                                <Text style={styles.item}>
-                                    <Text style={styles.label}>
-                                        Periodos completados / total de
-                                        periodos:{" "}
-                                    </Text>
-                                    {completed} / {total}
-                                </Text>
+                                <View style={styles.statusRow}>
+                                    <Text style={styles.label}>Estado</Text>
+                                    <View
+                                        style={[
+                                            styles.statusBadge,
+                                            training.status === "COMPLETED" &&
+                                                styles.statusCompleted,
+                                            training.status === "IN_PROGRESS" &&
+                                                styles.statusInProgress,
+                                            training.status === "NOT_STARTED" &&
+                                                styles.statusNotStarted,
+                                        ]}
+                                    >
+                                        <Text style={styles.statusBadgeText}>
+                                            {formatStatus(training.status)}
+                                        </Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.progressBlock}>
+                                    <View style={styles.progressHeader}>
+                                        <Text style={styles.label}>Avance</Text>
+                                        <Text style={styles.progressValue}>
+                                            {progressPercent}%
+                                        </Text>
+                                    </View>
+                                    <View style={styles.progressTrack}>
+                                        <View
+                                            style={[
+                                                styles.progressFill,
+                                                { width: `${progressPercent}%` },
+                                            ]}
+                                        />
+                                    </View>
+                                </View>
+
+                                <View style={styles.progressBlock}>
+                                    <View style={styles.progressHeader}>
+                                        <Text style={styles.label}>
+                                            Periodos completados
+                                        </Text>
+                                        <Text style={styles.progressValue}>
+                                            {completed} / {total}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.progressTrack}>
+                                        <View
+                                            style={[
+                                                styles.progressFill,
+                                                styles.periodFill,
+                                                { width: `${periodPercent}%` },
+                                            ]}
+                                        />
+                                    </View>
+                                </View>
                             </TouchableOpacity>
                         );
                     })
@@ -411,6 +460,61 @@ const styles = StyleSheet.create({
         fontSize: 14,
         lineHeight: 21,
         marginBottom: 8,
+    },
+    statusRow: {
+        alignItems: "center",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 12,
+        marginTop: 2,
+    },
+    statusBadge: {
+        backgroundColor: COLORS.textMuted,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+    },
+    statusCompleted: {
+        backgroundColor: COLORS.successGreen,
+    },
+    statusInProgress: {
+        backgroundColor: COLORS.primary,
+    },
+    statusNotStarted: {
+        backgroundColor: COLORS.locked,
+    },
+    statusBadgeText: {
+        color: COLORS.white,
+        fontSize: 12,
+        fontWeight: "700",
+    },
+    progressBlock: {
+        marginBottom: 12,
+    },
+    progressHeader: {
+        alignItems: "center",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 6,
+    },
+    progressValue: {
+        color: COLORS.changePasswordTitle,
+        fontSize: 13,
+        fontWeight: "700",
+    },
+    progressTrack: {
+        backgroundColor: COLORS.changePasswordBg,
+        borderRadius: 999,
+        height: 9,
+        overflow: "hidden",
+    },
+    progressFill: {
+        backgroundColor: COLORS.primary,
+        borderRadius: 999,
+        height: "100%",
+    },
+    periodFill: {
+        backgroundColor: COLORS.secondary,
     },
     emptyText: {
         color: COLORS.textMuted,
