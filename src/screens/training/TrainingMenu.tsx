@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     ScrollView,
     StyleSheet,
@@ -19,6 +20,7 @@ import {
     FormIonSelect,
     type IonSelectOption,
 } from "@/components/form/FormIonSelect";
+import { RecordsHeader } from "@/components/shared/RecordsHeader";
 
 type TrainingItem = {
     id: string;
@@ -100,6 +102,7 @@ function clampPercent(value?: number) {
 export function TrainingMenu() {
     const navigation = useNavigation<TrainingMenuNav>();
     const [trainings, setTrainings] = useState<TrainingItem[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
     const [projectOptions, setProjectOptions] = useState<
         IonSelectOption<string>[]
     >([]);
@@ -109,12 +112,17 @@ export function TrainingMenu() {
     const [selectedStatus, setSelectedStatus] =
         useState<TrainingStatusFilter>("");
 
+    useLayoutEffect(() => {
+        navigation.setOptions({ headerShown: false });
+    }, [navigation]);
+
     const loadEvaluable = async (filters?: {
         projectId?: string;
         areaId?: string;
         status?: TrainingStatusFilter;
     }) => {
         try {
+            setIsLoading(true);
             await userService.loadStorage();
             const payload = {
                 document: userService.user.dni ?? "",
@@ -144,6 +152,8 @@ export function TrainingMenu() {
                 err.response?.data?.message ??
                 "No se pudo consultar los trainings.";
             Alert.alert("Training", msg);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -194,9 +204,14 @@ export function TrainingMenu() {
         };
 
         const bootstrap = async () => {
-            await userService.loadStorage();
-            await Promise.all([loadProjectOptions(), loadAreaOptions()]);
-            await loadEvaluable();
+            try {
+                setIsLoading(true);
+                await userService.loadStorage();
+                await Promise.all([loadProjectOptions(), loadAreaOptions()]);
+                await loadEvaluable();
+            } finally {
+                setIsLoading(false);
+            }
         };
 
         void bootstrap();
@@ -246,7 +261,15 @@ export function TrainingMenu() {
     };
 
     return (
-        <SafeAreaView style={styles.safeArea}>
+        <View style={styles.page}>
+            <SafeAreaView style={styles.safeTop} edges={["top"]}>
+                <RecordsHeader
+                    title="Training"
+                    onBack={() => navigation.goBack()}
+                    showBackButton
+                />
+            </SafeAreaView>
+
             <ScrollView contentContainerStyle={styles.container}>
                 <Text style={styles.title}>Trainings</Text>
 
@@ -282,15 +305,28 @@ export function TrainingMenu() {
                     />
 
                     <TouchableOpacity
-                        style={styles.filterButton}
+                        style={[
+                            styles.filterButton,
+                            isLoading && styles.filterButtonDisabled,
+                        ]}
                         activeOpacity={0.85}
                         onPress={onFilter}
+                        disabled={isLoading}
                     >
-                        <Text style={styles.filterButtonText}>Filtrar</Text>
+                        <Text style={styles.filterButtonText}>
+                            {isLoading ? "Filtrando..." : "Filtrar"}
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
-                {trainings.length === 0 ? (
+                {isLoading ? (
+                    <View style={styles.loadingCard}>
+                        <ActivityIndicator color={COLORS.primary} size="large" />
+                        <Text style={styles.loadingText}>
+                            Cargando trainings...
+                        </Text>
+                    </View>
+                ) : trainings.length === 0 ? (
                     <Text style={styles.emptyText}>
                         No hay trainings disponibles.
                     </Text>
@@ -402,14 +438,17 @@ export function TrainingMenu() {
                     })
                 )}
             </ScrollView>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    safeArea: {
+    page: {
         flex: 1,
         backgroundColor: COLORS.changePasswordBg,
+    },
+    safeTop: {
+        backgroundColor: COLORS.white,
     },
     container: {
         padding: 16,
@@ -444,6 +483,9 @@ const styles = StyleSheet.create({
         color: COLORS.white,
         fontSize: 15,
         fontWeight: "700",
+    },
+    filterButtonDisabled: {
+        opacity: 0.7,
     },
     card: {
         backgroundColor: COLORS.white,
@@ -515,6 +557,18 @@ const styles = StyleSheet.create({
     },
     periodFill: {
         backgroundColor: COLORS.secondary,
+    },
+    loadingCard: {
+        alignItems: "center",
+        backgroundColor: COLORS.white,
+        borderRadius: 14,
+        gap: 10,
+        padding: 24,
+    },
+    loadingText: {
+        color: COLORS.changePasswordTitle,
+        fontSize: 14,
+        fontWeight: "700",
     },
     emptyText: {
         color: COLORS.textMuted,
